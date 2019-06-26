@@ -1,11 +1,13 @@
 import json
 import platform
 import re
+import time
 from base64 import b85encode, b85decode
 from getpass import getpass
 from pathlib import Path
 from typing import MutableMapping
 
+from vinanti import Vinanti
 
 def regex_file_check(value):
     check_str = r"^([^\x00-\x1F!\"$'\(\)*,\/:;<>\?\[\\\]\{\|\}\x7F]+)\.([a-zA-Z0-9]*)$"
@@ -78,16 +80,24 @@ class Config(MutableMapping):
         self.open()
 
     def __getitem__(self, key):
-        return self.__dict__[key]
+        return self.__dict__[key] if key in self.__dict__ else None
 
     def __setitem__(self, key, value):
-        if self.if_path(self, key, value):
-            self.__dict__[key] = self.if_path(self, key, value)
-        elif self.if_file(self, key, value):
-            self.__dict__[key] = self.if_file(self, key, value)
-        else:
-            str(value)
-        self.dump()
+        value_path = self.if_path(self, key, value)
+        if value_path:
+            self.__dict__[key] = value_path
+            self.dump()
+            return
+        del value_path
+        value_file = self.if_file(self, key, value)
+        if value_file:
+            self.__dict__[key] = value_file
+            self.dump()
+            return
+        del value_file
+        if "path" not in key and "file" not in key:
+            self.__dict__[key] = value
+            self.dump()
 
     def path(self):
         return self.file
@@ -95,12 +105,13 @@ class Config(MutableMapping):
     def update(self, __m, **kwargs):
         for key, value in __m.items():
             self.__setitem__(key, value)
-        self.dump()
 
     def create(self):
         print("Enter your login and password to osu.ppy.sh")
-        self.__dict__['username'] = input("Login:")
-        self.__dict__['password'] = getpass("Password:")
+        username = input("Login:")
+        password = getpass("Password:")
+        self.update({'password': password, 'username': username,})
+        del username, password
         if self.dump():
             print("User config successfully created")
             return True
@@ -159,6 +170,34 @@ class Config(MutableMapping):
                 self.__dict__.update(config)
                 return True
 
+    def check_expires_cookie(self):
+        timestamp = time.time()
+        expires = self['cookie_exp_time']
+        return expires and float(expires) > timestamp + 259200
+
+    def set_cookie_callback(self, *args):
+        self['osu_cookie'] = args[-1].session_cookies
+        exp_date = re.search(r'expires=([^;]*);', args[-1].info._headers[10][1])
+        self['cookie_exp_time'] = time.mktime(time.strptime(exp_date.group(1), "%a, %d-%b-%Y %H:%M:%S GMT"))
+
+    def request_cookie(self):
+        cookies_hdrs = {
+            'authorization': "Basic eGVua2luZzoxOTI4Mzc0NjUwYXNk",
+            'content-type': "application/x-www-form-urlencoded",
+            'charset': "UTF-8",
+        }
+        payload = {'username': self['username'], 'password': self['password']}
+        vnt_cookies = Vinanti(block=True, hdrs={"User-Agent": "Mozilla/5.0"}, multiprocess=True, session=True, timeout=60)
+        vnt_cookies.post('https://osu.ppy.sh/session', onfinished=self.set_cookie_callback, hdrs=cookies_hdrs,
+                         data=payload)
+
+    def get_cookie(self):
+        if self.check_expires_cookie():
+            return self['osu_cookie']
+        else:
+            self.request_cookie()
+            return self.get_cookie()
+
     @staticmethod
     def if_path(config, key, value):
         if "path" not in key:
@@ -169,7 +208,7 @@ class Config(MutableMapping):
             default_path = Path.home().joinpath("AppData\\Local\\osu!\\Songs")
         else:
             default_path = Path.home().joinpath('Downloads')
-        if value is None and key in config and Path(config[key]).exists():
+        if value is None and key in config.__dict__ and Path(config.__dict__[key]).exists():
             return None
         if type(value) is str and Path(value).exists():
             path: Path = Path(value).resolve(strict=True)
@@ -185,7 +224,7 @@ class Config(MutableMapping):
 
         default_path = default_dir('file.cfg')
         if value is None:
-            if key in config and Path(config[key]).exists():
+            if key in config.__dict__ and Path(config.__dict__[key]).exists():
                 return None
         if type(value) is not str:
             return None

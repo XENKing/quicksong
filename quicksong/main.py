@@ -1,13 +1,14 @@
+import multiprocessing
 from argparse import ArgumentParser
+from re import match
 
-import parsing
+from parsing import Parser
 
 
 def main():
     arg_parser = ArgumentParser(
-        prog="osu! beatmap downloader",
-        description="App to download beatmaps from osu! site. If beatmap cannot be downloaded from the main site"
-                    "(for whatever reason), retry from bloodcat.com")
+        prog="osu! beatmaps downloader",
+        description="App to download beatmaps from osu! site")
     arg_parser.add_argument(
         "-o", "--out",
         dest="download_path",
@@ -24,34 +25,40 @@ def main():
         "-a", "--auto-start",
         dest="auto_start",
         action="store_true",
-        help="If specified, automatic open beatmap when it finished downloading")
+        help="If specified, automatic open beatmaps when it finished downloading")
 
     group = arg_parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "urls",
         nargs='*',
         default=[],
-        help="Beatmap links")
+        help="Beatmaps urls or file with links")
     group.add_argument(
-        "-l", "--list-urls",
+        "-d", "--dump-exists",
         nargs='?',
-        dest="list_urls",
-        help="File with beatmap links")
+        dest="dump_path",
+        help="Dump existed beatmaps to file")
 
     args = arg_parser.parse_args()
     urls = []
-    if args.list_urls is not None:
-        print("Using links file")
-        with open(args.list_urls) as f:
-            urls = f.read().splitlines()
+    for url in args.urls:
+        if match(r"((https?):((//)|(\\\\))+([\w\d:#@%/;$()~_?+-=\\.&](#!)?)*)", url):
+            print("Using urls")
+            urls = args.urls
+            break
+        else:
+            print("Using links file")
+            with open(url) as f:
+                urls.append(f.read().splitlines())
+
+    parser = Parser(urls, args.config_path, args.download_path, args.songs_path, args.auto_start)
+    if args.dump_path is None:
+        parser.parse_songs()
     else:
-        print("Using urls")
-        urls = args.urls
-
-    song_ids = [parsing.get_song_id(url) for url in urls if url]
-
-    parsing.parse_songs(song_ids, args.config_path, args.download_path, args.songs_path, args.auto_start)
+        with open(args.dump_path, 'w') as f:
+            f.writelines([f"http://osu.ppy.sh/beatmapsets/{el}\n" for el in parser.existed_ids])
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     main()

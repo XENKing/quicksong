@@ -1,0 +1,3 @@
+[submodule "ext/vinanti"]
+	path = ext/vinanti
+	url = https://github.com/kanishka-linux/vinanti

@@ -1,47 +1,15 @@
 import os
 import re
-import sys
-import requests
-from multiprocessing.dummy import Pool as ThreadPool
 from pathlib import Path
 from typing import FrozenSet, Generator, Optional
-from urllib.error import URLError, HTTPError
-from time import sleep
+
+from vinanti import Vinanti
 
 from config import Config
-from cookiesApi import CookiesApi
-
-
-def get_cacert():
-    if getattr(sys, 'frozen', False):
-        # if frozen, get embeded file
-        return os.path.join(os.path.dirname(sys.executable), 'cacert.pem')
-    else:
-        # else just get the default file
-        return requests.certs.where()
-
-
-def get_existing_ids(songs_path: str) -> Generator[int, None, None]:
-    path: Path = Path(songs_path).resolve(strict=True)
-
-    if not path.is_dir():
-        raise IsADirectoryError
-
-    for beatmap in path.iterdir():
-        match = re.match(r"(\d+)", beatmap.name)
-
-        if match:
-            yield int(match.group((1)))
 
 
 def get_song_id(url: str):
-    if re.match(r'/b/', url):
-        old_url = url + "#osu-site-switcher"
-        new_url = requests.get(url).url
-    else:
-        new_url = url
-
-    song_id = re.split(r'/([0-9]{5,7})', new_url)
+    song_id = re.split(r'/([0-9]{5,7})', url)
     int_id = None
     for raw_id in song_id:
         try:
@@ -53,73 +21,79 @@ def get_song_id(url: str):
     return int_id
 
 
-def parse_songs(song_ids, config_path=None, download_path=None, songs_path=None, auto_start=None):
-    config = Config(config_path)
-    config.update({'download_path': download_path, 'songs_path': songs_path})
-    config_download_path: Path = Path(config['download_path'])
+class Parser:
 
-    existing_ids: Optional[FrozenSet[int]] = frozenset(get_existing_ids(config['songs_path']))
+    def __init__(self, song_urls, config_path=None, download_path=None, songs_path=None, auto_start=None) -> None:
+        self._config = Config(config_path)
+        self._config.update({'download_path': download_path, 'songs_path': songs_path})
+        self._header = {"User-Agent": "Mozilla/5.0", "Cookie": self._config.get_cookie()}
+        self.download_path = Path(self._config['download_path']).resolve(strict=True)
+        self.songs_path = Path(self._config['songs_path']).resolve(strict=True)
 
-    cookies: CookiesApi = CookiesApi(config).cookies
-
-    for song_id in song_ids:
-        if song_id in existing_ids:
-            print(f"Beatmap already exist:   {song_id}")
-            song_ids.remove(song_id)
-
-    def get_song(s_id):
-        urls = [
-            f"http://osu.ppy.sh/beatmapsets/{s_id}/download?noVideo=1",
-            f"http://osu.ppy.sh/d/{s_id}",
-            f"http://bloodcat.com/osu/s/{s_id}"
-        ]
-        head_url = f"http://osu.ppy.sh/beatmapsets/{s_id}"
-
-        for url in urls:
-            try:
-                print(f"Beatmap {s_id}: {url}")
-                read = requests.get(url, cookies=cookies, verify=True)
-                while read.status_code == 429:
-                    sleep(10)
-                    read = requests.get(url, cookies=cookies, verify=True)
-
-                filename = config_download_path.joinpath("beatmap_" + str(s_id) + ".osz")
-                with open(str(filename), 'wb') as w:
-                    for chunk in read.iter_content(chunk_size=512):
-                        if chunk:
-                            w.write(chunk)
-                head = requests.get(head_url)
-                get_beatmap_name = None
-                for i, chunk in enumerate(head.iter_content(chunk_size=512)):
-                    if chunk and i == 4:
-                        get_beatmap_name = re.search(r'<title>([^\xB7]*)\s+[\xB7]', chunk.decode('utf8'), re.IGNORECASE)
-                        break
-                del head
-                if get_beatmap_name:
-                    valid_file_name = re.sub(r'[^\w_.)( -]', '', str(s_id) + " " + get_beatmap_name.group(1) + ".osz")
-                    named_beatmap = config_download_path.joinpath(valid_file_name)
-                    filename.replace(named_beatmap)
-                    # print("Beatmap saved in:", named_beatmap)
-            except HTTPError as e:
-                print("The server couldn't fulfill the request")
-                print(f"Url: {url}")
-                print("Error code: ", e.code)
-                return
-            except URLError as e:
-                print("We failed to reach a server")
-                print(f"Url: {url}")
-                print("Reason: ", e.reason)
-                return
-            else:
-                if auto_start:
-                    os.startfile(filename)
-            print(f"Successfully downloaded: {s_id}")
-            return
+        if len(song_urls) > 5:
+            self.vnt = Vinanti(block=False, hdrs=self._header, binary=True, multiprocess=True, session=True, wait=5,
+                               timeout=60, max_requests=5)
         else:
-            print(f"Failed to download: {s_id}")
+            self.vnt = Vinanti(block=False, hdrs=self._header, binary=True, session=True, wait=5,
+                               timeout=60, max_requests=5)
+        self.existed_ids: Optional[FrozenSet[int]] = frozenset(self.get_existing_ids())
+        self.song_ids = []
+        self.auto_start = auto_start
+        self.urls_to_ids(song_urls)
 
-    pool = ThreadPool()
-    pool.map(get_song, song_ids)
+    def urls_to_ids_callback(self, *args):
+        new_url = args[-1].url
+        self.song_ids.append(get_song_id(new_url))
 
-    pool.close()
-    pool.join()
+    def get_existing_ids(self) -> Generator[int, None, None]:
+        if not self.songs_path.is_dir():
+            raise IsADirectoryError
+
+        for beatmap in self.songs_path.iterdir():
+            match = re.search(r"(\d+)", beatmap.name)
+
+            if match:
+                yield int(match.group(1))
+
+    def urls_to_ids(self, urls: list):
+        for url in urls:
+            new_url = re.sub(r'/b/', '/beatmaps/', url)
+
+            if not new_url == url:
+                vnt = Vinanti(block=True, hdrs={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                vnt.head(new_url, onfinished=self.urls_to_ids_callback)
+            else:
+                self.song_ids.append(get_song_id(url))
+
+    def postdownloading_callback(self, *args):
+        r = args[-1]
+        if r.status == 429:
+            print("Error 429: retrying: ", args[-2])
+            song_id = get_song_id(args[-2])
+            self.vnt.get(f"http://osu.ppy.sh/beatmapsets/{song_id}/download?noVideo=1",
+                         onfinished=self.postdownloading_callback,
+                         out=str(self.download_path.joinpath(f"beatmap_{song_id}.osz")))
+        try:
+            old_filename = Path(r.out_file).resolve(strict=True)
+            name = r.info._headers[6][1].split('"')[1::2][0]
+            name = re.sub(r'[^\w_.)( -]', '', name)
+            name = old_filename.parent.joinpath(name)
+            old_filename.replace(name)
+        except Exception as e:
+            print(e)
+            print(f"Failed to rename beatmap: {args[-2]}")
+            pass
+        else:
+            if self.auto_start:
+                os.startfile(name)
+            print(f"Successfully downloaded: {name}")
+
+    def parse_songs(self):
+        for idx in range(len(self.song_ids) - 1, -1, -1):
+            song_id = self.song_ids.pop(idx)
+            if song_id in self.existed_ids:
+                print(f"Beatmap already exist: {song_id}")
+            else:
+                self.vnt.get(f"http://osu.ppy.sh/beatmapsets/{song_id}/download?noVideo=1",
+                             onfinished=self.postdownloading_callback,
+                             out=str(self.download_path.joinpath(f"beatmap_{song_id}.osz")))
