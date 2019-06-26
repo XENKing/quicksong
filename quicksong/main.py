@@ -49,7 +49,7 @@ def main():
         else:
             print("Using links file")
             with open(url) as f:
-                urls.append(f.read().splitlines())
+                urls = f.read().splitlines()
 
     parser = Parser(urls, args.config_path, args.download_path, args.songs_path, args.auto_start)
     if args.dump_path is None:
