@@ -9,6 +9,7 @@ from typing import MutableMapping
 
 from vinanti import Vinanti
 
+
 def regex_file_check(value):
     check_str = r"^([^\x00-\x1F!\"$'\(\)*,\/:;<>\?\[\\\]\{\|\}\x7F]+)\.([a-zA-Z0-9]*)$"
     return re.match(check_str, value)
@@ -95,7 +96,7 @@ class Config(MutableMapping):
             self.dump()
             return
         del value_file
-        if "path" not in key and "file" not in key:
+        if "path" not in key and "file" not in key and value:
             self.__dict__[key] = value
             self.dump()
 
@@ -110,7 +111,7 @@ class Config(MutableMapping):
         print("Enter your login and password to osu.ppy.sh")
         username = input("Login:")
         password = getpass("Password:")
-        self.update({'password': password, 'username': username,})
+        self.update({'password': password, 'username': username})
         del username, password
         if self.dump():
             print("User config successfully created")
@@ -187,7 +188,8 @@ class Config(MutableMapping):
             'charset': "UTF-8",
         }
         payload = {'username': self['username'], 'password': self['password']}
-        vnt_cookies = Vinanti(block=True, hdrs={"User-Agent": "Mozilla/5.0"}, multiprocess=True, session=True, timeout=60)
+        vnt_cookies = Vinanti(block=True, hdrs={"User-Agent": "Mozilla/5.0"}, multiprocess=True, session=True,
+                              timeout=60)
         vnt_cookies.post('https://osu.ppy.sh/session', onfinished=self.set_cookie_callback, hdrs=cookies_hdrs,
                          data=payload)
 
