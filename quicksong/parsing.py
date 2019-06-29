@@ -99,7 +99,7 @@ class Parser:
                     proxy = re.search(r"//([^/]*)/", input_kwargs["proxies"]["http"]).group(1)
                     if proxy in self._proxy.proxies:
                         self._proxy.proxies.remove(proxy)
-                    if self._proxy.proxies < 2:
+                    if len(self._proxy.proxies) < 2:
                         print("No valid proxies, exiting\n")
                         del self._proxy
                 return self.retry_download(url)
