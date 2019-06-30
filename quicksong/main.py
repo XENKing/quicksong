@@ -2,6 +2,7 @@ import multiprocessing
 from argparse import ArgumentParser
 from re import match
 
+import msvcrt
 from parsing import Parser
 
 
@@ -64,17 +65,25 @@ def main():
             break
         else:
             print("Using links file")
-            with open(url) as f:
+            with open(url, encoding="utf8") as f:
                 urls = f.read().splitlines()
     use_proxy = True if args.use_proxy or args.use_proxy_parallel else False
     parser = Parser(urls, args.config_path, args.download_path, args.songs_path, args.auto_start, args.multiprocess, use_proxy)
     if args.dump_path is None:
         parser.parse_songs_parallel() if args.use_proxy_parallel else parser.parse_songs()
     else:
-        with open(args.dump_path, 'w') as f:
+        with open(args.dump_path, 'w', encoding="utf8") as f:
             f.writelines([f"http://osu.ppy.sh/beatmapsets/{el}\n" for el in parser.existed_ids])
+    return parser
+
 
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    main()
+    p = main()
+    while True:
+        if msvcrt.kbhit():
+            if ord(msvcrt.getch()) == 27:
+                p.exit()
+                break
+

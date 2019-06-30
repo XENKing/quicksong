@@ -7,6 +7,7 @@ from getpass import getpass
 from pathlib import Path
 from typing import MutableMapping
 
+from secret import PROGRAM_SECRET, OFFSET_SECRET
 from vinanti import Vinanti
 
 
@@ -40,7 +41,7 @@ def get_ip():
 def get_sig():
     import hashlib
     info = platform.uname()
-    sig = ''.join(str(el) for el in [info.node, info.machine, info.system, info.processor, get_ip()])
+    sig = ''.join(str(el) for el in [info.node, info.machine, info.system, info.processor, get_ip(), PROGRAM_SECRET])
     return hashlib.md5(sig.encode('utf-8')).hexdigest()
 
 
@@ -52,14 +53,16 @@ def password_encode(password: str):
     secret = token_hex(secret_length)
 
     hashed_password = password.join([secret[:(len(secret) - shift)], secret[(len(secret) - shift):]])
-
-    return b85encode((str(len(secret)) + hashed_password + str(shift)).encode()).decode()
+    encode_str = str(str(len(secret)) + hashed_password + str(shift))
+    return b85encode(str(
+        encode_str[len(encode_str) - OFFSET_SECRET:] + encode_str[:len(encode_str) - OFFSET_SECRET]).encode()).decode()
 
 
 def password_decode(password: str, sig: str):
     if sig != get_sig():
         return None
-    decoded_password = b85decode(password.encode()).decode()
+    decoded_str = b85decode(password.encode()).decode()
+    decoded_password = str(decoded_str[OFFSET_SECRET:] + decoded_str[:OFFSET_SECRET])
     shift = int(decoded_password[-2:])
     secret_len = int(decoded_password[:2]) + 2
 
@@ -110,7 +113,9 @@ class Config(MutableMapping):
     def create(self):
         print("Enter your login and password to osu.ppy.sh")
         username = input("Login:")
-        password = getpass("Password:")
+        password = None
+        while not password:
+            password = getpass("Password:")
         self.update({'password': password, 'username': username})
         del username, password
         if self.dump():
@@ -120,11 +125,12 @@ class Config(MutableMapping):
 
     def dump(self, encrypt_pass=True):
         config = {k: str(v) for k, v in self.__dict__.items()}
+
         if encrypt_pass:
             config["signature"] = get_sig()
             config.update({"password": password_encode(config['password'])})
 
-        with open(self.file, 'w') as file:
+        with open(self.file, 'w', encoding="utf8") as file:
             try:
                 json.dump(config, file, ensure_ascii=False)
                 del config
@@ -159,7 +165,7 @@ class Config(MutableMapping):
         return False
 
     def load(self, decrypt_pass=True):
-        with open(self.file) as file:
+        with open(self.file, encoding="utf8") as file:
             try:
                 config = json.load(file)
                 if decrypt_pass:

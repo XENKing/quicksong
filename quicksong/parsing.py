@@ -42,7 +42,8 @@ def get_existing_ids(paths) -> Generator[int, None, None]:
 
 class Parser:
 
-    def __init__(self, song_urls, config_path=None, download_path=None, songs_path=None, auto_start=None, multiprocess=None,
+    def __init__(self, song_urls, config_path=None, download_path=None, songs_path=None, auto_start=None,
+                 multiprocess=None,
                  use_proxy=None):
         self._config = Config(config_path)
         self._config.update({'download_path': download_path, 'songs_path': songs_path, 'use_proxy': use_proxy})
@@ -66,6 +67,13 @@ class Parser:
         self.song_ids = []
         self.auto_start = auto_start
         self.urls_to_ids(song_urls)
+
+    def exit(self):
+        print("Stopping program\n")
+        self.vnt.loop_close()
+        del self.vnt
+        del self._proxy
+        del self
 
     def urls_to_ids_callback(self, *args):
         new_url = args[-1].url
